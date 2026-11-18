@@ -109,6 +109,7 @@ class Worker:
             payload = {"status": "complete", "result": result}
         except asyncio.TimeoutError:
             payload = {"status": "failed", "error": "job timeout"}
+        # noinspection PyBroadException
         except Exception as exc:
             payload = {"status": "failed", "error": repr(exc)}
         finally:
