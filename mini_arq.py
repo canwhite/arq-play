@@ -16,11 +16,13 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 # ---------------------------------------------------------------
 # 生产者侧：入队 + 查询结果
 # ---------------------------------------------------------------
+# 主线负责入队和拿结果
 class MiniQueue:
     def __init__(self, redis_url=REDIS_URL, queue_name="default"):
         self.r = redis.from_url(redis_url, decode_responses=True)
         self.queue = f"{PREFIX}:queue:{queue_name}"
-
+    
+    # function  只存任务名。具体实现应在 Worker 消费队列时，通过任务注册表查到。
     async def enqueue(self, function: str, *args, **kwargs) -> str:
         job_id = uuid.uuid4().hex
         job = {
@@ -31,9 +33,14 @@ class MiniQueue:
             "enqueued_at": time.time(),
         }
         # 主队列：LPUSH 入队，Worker 侧 BLPOP 从另一头取出
+        """注意这里LIFO，这里的第一个L时last的意思，f是first的意思；后进先出，这是个栈
+        与之相反的是FIFO，先进先出，是个队列，左进，右出，或者右进左出，排成一条线就ok
+        """
+        # 存取不用单独声明，直接使用redis就ok
         await self.r.lpush(self.queue, json.dumps(job))
         return job_id
 
+    # 获取结果,就是到时间了redis去get
     async def get_result(self, job_id: str, timeout: float = 10) -> dict | None:
         key = f"{PREFIX}:result:{job_id}"
         deadline = time.time() + timeout
@@ -140,11 +147,16 @@ async def add(a, b):
 
 
 async def main():
+    # 先创建mini队列
     queue = MiniQueue()
+    # worker实际上添加了真正的方法
     worker = Worker({"add": add}, max_concurrent=5, job_timeout=10)
+    # worker执行了
     worker_task = asyncio.create_task(worker.run())
 
+    # 拿到id
     job_id = await queue.enqueue("add", 1, 2)
+    # 通过获取结果
     result = await queue.get_result(job_id)
     print(f"job {job_id} -> {result}")
 
